@@ -4,7 +4,7 @@ import cv2
 from flask import Flask, request, jsonify
 from werkzeug.utils import secure_filename
 
-from lpr import *
+from lpr import do_detect
 import json
 
 
