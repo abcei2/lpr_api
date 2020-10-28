@@ -1,16 +1,69 @@
 import os
 import cv2
+import json
+import requests
+
+from functools import wraps
 
 from flask import Flask, request, jsonify
 from werkzeug.utils import secure_filename
 
 from lpr import do_detect
-import json
 
 
 app = Flask(__name__)
 
+# TODO: Be aware of this. Worked when dev. Make it suitable for prod
+# VALIDATE_TOKEN_URL = 'http://192.168.195.225:8001/api/validate-token/'
+VALIDATE_TOKEN_URL = 'https://ai.tucanoar.com/api/validate-token/'
 ALLOWED_EXTENSIONS = ['png', 'jpg', 'jpeg', 'gif']
+
+
+class AuthException(Exception):
+    status_code = 401
+    message = 'Authorization failed'
+
+    def __init__(self, message=None, status_code=None, payload=None):
+        Exception.__init__(self)
+        if message is not None:
+            self.message = message
+        if status_code is not None:
+            self.status_code = status_code
+        self.payload = payload
+
+    def to_dict(self):
+        rv = dict(self.payload or ())
+        rv['message'] = self.message
+        return rv
+
+
+@app.errorhandler(AuthException)
+def handle_auth_exception(error):
+    response = jsonify(error.to_dict())
+    response.status_code = error.status_code
+    return response
+
+
+def validate_token(func):
+    @wraps(func)
+    def wrapper(*args, **kwargs):
+        if 'Authorization' not in request.headers:
+            raise AuthException('Authorization header not provided')
+
+        try:
+            response = requests.request(
+                url=VALIDATE_TOKEN_URL,
+                method='get',
+                headers={'Authorization': request.headers['Authorization']}
+            )
+        except requests.exceptions.ConnectionError:
+            raise AuthException('Authentication server is unreachable')
+
+        if response.status_code != 200:
+            raise AuthException(response.json()['detail'])
+
+        return func(*args, **kwargs)
+    return wrapper
 
 
 def allowed_file(filename):
@@ -44,6 +97,7 @@ def not_busy():
 
 
 @app.route('/detect/', methods=['POST'])
+@validate_token
 def upload_file():
     if is_busy():
         resp = jsonify({'message': 'Service is being used'})
